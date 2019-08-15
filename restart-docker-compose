@@ -1,0 +1,128 @@
+#!/bin/bash -l
+
+# Export buildnumber argument
+export BUILDNUMBER=$1
+# Set program name for error reporting
+PROGNAME=$(basename $0)
+# Set alert level for disk space
+ALERT=90
+# Container images array to download
+images=(azlcms celery)
+
+# Error handling routine
+error_exit()
+{
+  # --------------------------------------------------------
+  #  Function for exit due to fatal program error
+  #     Accepts 1 argument:
+  #             string containing descriptive error message
+  # --------------------------------------------------------
+  echo "${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
+  exit 1
+}
+
+# Restart containers routine
+restart_containers()
+{
+   if [ -z $image_is_running ] ; then
+      printf "\n***********************************\n"
+      printf "Executing docker-compose down\n"
+      printf "***********************************\n"
+      docker-compose down || \
+         error_exit "$LINENO: An error has occured. Cannot execute docker-compose down!"
+   fi
+   printf "\n******************************\n"
+   printf "Executing docker-compose up -d\n"
+   printf "********************************\n"
+   docker-compose up -d || \
+      error_exit "$LINENO: An error has occured. Cannot execute docker-compose up -d!"
+   printf "\n********** Build $1 succesfull deployed! **********\n"
+   exit 1
+}
+
+# Check current running build image routine
+# If same build or higher ask if we want to restart
+check_running_image()
+{
+   # Check if running images are equal to buildnumber
+   printf "\n*****************************************\n"
+   printf "Check if buildnummer $BUILDNUMBER is already active"
+   printf "\n*****************************************\n"
+   printf "Checking running image of $image\n"
+   runningimage=$(docker ps | grep io/$image | awk '{ print $2 }' | cut -d':' -f 2)
+   if [ -z $runningimage ] ; then
+      printf "No running images"
+      image_is_running=1
+   else
+      printf "Running buildnumber $runningimage\n"
+      if [ $BUILDNUMBER == $runningimage ] ; then
+         read -p "Image $runningimage is al actief, herstarten? [y] " input
+         if [ $input = "y" ] ; then
+            restart_containers
+         fi
+         error_exit "$LINENO: An error has occured. $image image already running with buildnumber $BUILDNUMBER or higher!"
+      fi
+   fi
+}
+
+# Check if image is already downloaded
+check_image_exist()
+{
+   if [[ "$(docker images -q itmcregistry.azurecr.io/$image:$BUILDNUMBER 2> /dev/null)" == "" ]]; then
+   # do something
+      printf "\n****************************************\n"
+      printf "Check if there is enough disk space left"
+      printf "\n****************************************\n"
+      used=$(echo $(df -vh | grep root | awk '{ print $5 }' | cut -d'%' -f1))
+      if [[ $used -ge $ALERT ]] ; then
+         error_exit "$LINENO: An error has occured. Not enough disk space left!"
+      fi
+
+      printf "***************************\n"
+      printf "Logging into itmcregistry\n"
+      printf "***************************\n"
+      az acr login --name itmcregistry || \
+         error_exit "$LINENO: An error has occured. Cannot login itmcregistry"
+
+      # Check if images with buildnumber is in itmcregistry
+      printf "\n***************************************************\n"
+      printf "Check if buildnummer $BUILDNUMBER is availabe in itmcregistry"
+      printf "\n***************************************************\n"
+
+      az acr repository show-tags --name itmcregistry --repository $image --output table | grep $BUILDNUMBER || \
+         error_exit "$LINENO: An error has occured. Image with buildnumber $BUILDNUMBER not available in itmcregistry!"
+
+      printf "\n***********************************\n"
+      printf "Pulling celery from itmcregistry\n"
+      printf "***********************************\n"
+      docker pull itmcregistry.azurecr.io/$image:$BUILDNUMBER || \
+         error_exit "$LINENO: An error has occured. Cannot download $image image!"
+
+      return 1
+   fi
+}
+
+# Check if buildnumber is given as argument
+if [[ $# -eq 0 ]] ; then
+   error_exit "$LINENO: An error has occured. Enter buildnumber! $PROGNAME buildnumber"
+fi
+
+# Clear our terminal
+clear >$(tty)
+
+cd $PWD
+
+for image in "${images[@]}"
+do
+   :
+   # Check if the image:buildnumber is already running
+   check_running_image
+
+   # Check if image already exist local
+   check_image_exist
+
+   # And restart the containers
+   restart_containers
+done
+
+restart_containers

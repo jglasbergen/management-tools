@@ -1,0 +1,34 @@
+#!/bin/bash -l
+
+# Set program name for error reporting
+PROGNAME=$(basename $0)
+# Set alert level for disk space
+ALERT=90
+# Container images array to download
+images=(azlcms celery)
+
+# Error handling routine
+error_exit()
+{
+  # --------------------------------------------------------
+  #  Function for exit due to fatal program error
+  #     Accepts 1 argument:
+  #             string containing descriptive error message
+  # --------------------------------------------------------
+  echo "${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
+  exit 1
+}
+
+cd /home/webapps/azlcms
+
+# Clear our terminal
+clear >$(tty)
+
+printf "Checking running image of $images\n"
+runningimage=$(docker ps | grep io/$images | awk '{ print $2 }' | cut -d':' -f 2)
+printf "Running buildnumber $runningimage\n"
+export BUILDNUMBER=$runningimage
+
+docker-compose down || \
+   error_exit "$LINENO: An error has occured. Cannot execute docker-compose down!"
+
